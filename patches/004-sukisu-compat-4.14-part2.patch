@@ -1,0 +1,36 @@
+--- a/kernel/selinux/sepolicy.c	2026-11-23 18:18:18.671153653 +0800
++++ b/kernel/selinux/sepolicy.c	2026-11-23 18:18:18.859153653 +0800
+@@ -3,6 +3,10 @@
+ extern int susfs_add_sus_type(const char *secctx, u32 type_value);
+ #endif // #ifdef CONFIG_KSU_SUSFS
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 1, 0)
++#include <linux/flex_array.h>
++#endif
++
+ #define KSU_SUPPORT_ADD_TYPE
+ 
+ //////////////////////////////////////////////////////
+--- a/kernel/extension/kpm/kpm.c	2026-11-23 18:18:18.703153653 +0800
++++ b/kernel/extension/kpm/kpm.c	2026-11-23 18:18:19.003153653 +0800
+@@ -14,6 +14,11 @@
+ #include "compact.h"
+ #include "bridge.h"
+ 
++/* 4.14 compat: u64_to_user_ptr() only exists on newer kernels */
++#ifndef u64_to_user_ptr
++#define u64_to_user_ptr(x) ((void __user *)(uintptr_t)(x))
++#endif
++
+ #define KPM_NAME_LEN 32
+ #define KPM_ARGS_LEN 1024
+ #define KPM_PATH_LEN 1024
+@@ -179,7 +184,7 @@
+     int result;
+     /* Called only through the manager_or_root-authorized extension ioctl. */
+     if (copy_from_user(&cmd, arg, sizeof(cmd))) return -EFAULT;
+-    if (!access_ok(u64_to_user_ptr(cmd.result_code), sizeof(result))) return -EFAULT;
++    if (!ksu_access_ok(u64_to_user_ptr(cmd.result_code), sizeof(result))) return -EFAULT;
+     result = handle_kpm(&cmd);
+     return copy_to_user(u64_to_user_ptr(cmd.result_code), &result, sizeof(result)) ? -EFAULT : 0;
+ }
