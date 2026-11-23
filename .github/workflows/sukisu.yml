@@ -216,7 +216,7 @@ jobs:
           echo "===== 预检 1/2: scripts prepare ====="
           make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 scripts prepare 2>&1 | tee ../precheck.log | tail -20
           echo "===== 预检 1.5/2: 生成 include/generated/compile.h 并核对指纹 ====="
-          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 include/generated/compile.h 2>&1 | tee -a ../precheck.log | tail -5
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 init/version.o 2>&1 | tee -a ../precheck.log | tail -5
           echo "--- out/include/generated/compile.h ---"
           cat out/include/generated/compile.h || true
 
