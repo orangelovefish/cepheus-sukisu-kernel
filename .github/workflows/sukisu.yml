@@ -175,6 +175,14 @@ jobs:
           printf '  .scmversion = '
           cat .scmversion
           printf '\n'
+          echo "=== 检测 avtab htable 形态 (决定走 5.1+ 分支) ==="
+          if grep -q 'struct avtab_node \*\*htable' security/selinux/ss/avtab.h; then
+            echo "AVTAB_CFLAGS=-DKSU_AVTAB_HTABLE_IS_ARRAY" >> "$GITHUB_ENV"
+            echo "检测到 array-based htable -> -DKSU_AVTAB_HTABLE_IS_ARRAY"
+          else
+            echo "AVTAB_CFLAGS=" >> "$GITHUB_ENV"
+            echo "检测到 flex_array htable -> 不定义"
+          fi
           echo "=== hook 落点抽查 ==="
           grep -n 'ksu_handle_' fs/exec.c fs/open.c fs/stat.c fs/read_write.c drivers/input/input.c kernel/reboot.c
           echo "=== mkcompile_h 改动抽查 ==="
@@ -213,6 +221,7 @@ jobs:
           export PATH="$TC_DIR/bin:$PATH"
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export KCFLAGS="$AVTAB_CFLAGS"
           echo "===== 预检 1/2: scripts prepare ====="
           make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 scripts prepare 2>&1 | tee ../precheck.log | tail -20
           echo "===== 预检 1.5/2: 生成 include/generated/compile.h 并核对指纹 ====="
@@ -247,11 +256,9 @@ jobs:
           echo "clang   : $(command -v clang)"
           echo "buildby : $KBUILD_BUILD_USER@$KBUILD_BUILD_HOST"
           echo "stamp   : $KBUILD_BUILD_TIMESTAMP"
-          if [ -n "$EXTRA" ]; then
-            make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 -j"$(nproc)" KCFLAGS="$EXTRA" 2>&1 | tee ../build.log
-          else
-            make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 -j"$(nproc)" 2>&1 | tee ../build.log
-          fi
+          export KCFLAGS="$AVTAB_CFLAGS $EXTRA"
+          echo "KCFLAGS=$KCFLAGS"
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 -j"$(nproc)" 2>&1 | tee ../build.log
           echo "===== 编译命令正常返回 ====="
 
       - name: '11. 验收检查 (指纹 / KSU 目标文件 / 镜像头)'
