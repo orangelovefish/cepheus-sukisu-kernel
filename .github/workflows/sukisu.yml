@@ -163,7 +163,7 @@ jobs:
           echo "=== 改动统计 ==="
           git diff --stat
           echo "=== SukiSU 侧 4.14 兼容补丁 ==="
-          for p in "$GITHUB_WORKSPACE"/patches/003-*.patch; do
+          for p in "$GITHUB_WORKSPACE"/patches/003-*.patch "$GITHUB_WORKSPACE"/patches/004-*.patch; do
             [ -f "$p" ] || continue
             echo "--- $(basename "$p") ---"
             git -C "$GITHUB_WORKSPACE/KernelSU" apply --check -v "$p"
