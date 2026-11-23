@@ -1,0 +1,234 @@
+# ============================================================
+# 阶段 7: 全云端重打包 boot.img
+#   - 取 Release(stock-boot-base) 里的原版 boot.img.gz
+#   - 取指定 build run 的 Image.gz
+#   - 用 Magisk 官方 APK 内的 libmagiskboot.so 做替换 + repack
+#   - 回环自检 (header / ramdisk / dtb / 指纹 / 体积) 后上传 Artifacts + Release
+# ============================================================
+name: cepheus-repack
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: '成功的 cepheus-sukisu run_id (只填数字)'
+        required: true
+      release_tag:
+        description: '成品 Release tag'
+        required: false
+        default: 'sukisu-build-v1'
+      stock_tag:
+        description: '原版 boot.img.gz 所在 Release tag'
+        required: false
+        default: 'stock-boot-base'
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  STOCK_TAG: ${{ github.event.inputs.stock_tag || 'stock-boot-base' }}
+  RELEASE_TAG: ${{ github.event.inputs.release_tag || 'sukisu-build-v1' }}
+  BUILD_RUN_ID: ${{ github.event.inputs.build_run_id }}
+  EXPECTED_VERSION: 'Linux version 4.14.353-openela-REVUELTO-//aba8883167 (celeste@PixelOS-CI) (playground clang version 17.0.0 (https://github.com/llvm/llvm-project 4f4b2161ec3cc42890aa9a445588d5a9a67e9033), LLD 17.0.0) #1 SMP PREEMPT Sat Jan 18 01:37:43 CET 2025'
+
+jobs:
+  repack:
+    name: repack-boot-sukisu
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - name: '0. 环境信息'
+        shell: bash
+        run: |
+          uname -a
+          df -h /
+          echo "build_run_id=$BUILD_RUN_ID"
+
+      - name: '1. 下载原版 boot.img.gz 并解压'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          URL=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$STOCK_TAG" \
+            | grep -o '"browser_download_url":"[^"]*boot\.img\.gz"' | head -1 | cut -d'"' -f4)
+          echo "stock url: $URL"
+          test -n "$URL"
+          curl -fSL --retry 3 -o work/boot.img.gz "$URL"
+          ls -l work/boot.img.gz
+          gzip -dc work/boot.img.gz > work/boot.img
+          ls -l work/boot.img
+          sha256sum work/boot.img | tee work/boot_stock.sha256
+
+      - name: '2. 下载 SukiSU 编译产物 (Image.gz)'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ART=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID/artifacts")
+          echo "$ART" | grep -o '"name":"[^"]*"'
+          URL=$(echo "$ART" | grep -o '"archive_download_url":"[^"]*"' | head -1 | cut -d'"' -f4)
+          test -n "$URL"
+          curl -fSL --retry 3 -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -o work/art.zip "$URL"
+          unzip -o work/art.zip -d work/art >/dev/null
+          find work/art -type f | sort
+          IMG=$(find work/art -name Image.gz | head -1)
+          SM=$(find work/art -name System.map | head -1)
+          if [ -n "$SM" ]; then cp "$SM" work/System.map; ls -l work/System.map; fi
+          test -n "$IMG"
+          cp "$IMG" work/Image.gz
+          ls -l work/Image.gz
+          echo "--- Image.gz 头部 ---"
+          od -A x -t x1z -N 16 work/Image.gz
+
+      - name: '2.5 校验 System.map 关键 ksu 符号'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f work/System.map
+          for s in ksu_handle_sys_reboot ksu_handle_execveat ksu_handle_execveat_sucompat ksu_handle_vfs_read ksu_handle_input_handle_event ksu_handle_faccessat ksu_handle_stat; do
+            if grep -q " $s$" work/System.map; then echo "OK   $s"; else echo "FAIL 缺少符号 $s"; exit 1; fi
+          done
+          echo "ksu 符号总数: $(grep -c ksu work/System.map)"
+
+      - name: '3. 获取 magiskboot (Magisk 官方 APK 内)'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK_URL=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/topjohnwu/Magisk/releases/latest" \
+            | grep -o '"browser_download_url":"[^"]*\.apk"' | head -1 | cut -d'"' -f4)
+          echo "magisk apk: $APK_URL"
+          test -n "$APK_URL"
+          curl -fSL --retry 3 -o work/magisk.apk "$APK_URL"
+          unzip -o -j work/magisk.apk 'lib/x86_64/libmagiskboot.so' -d work/bin >/dev/null
+          mv work/bin/libmagiskboot.so work/bin/magiskboot
+          chmod +x work/bin/magiskboot
+          ls -l work/bin/magiskboot
+          work/bin/magiskboot 2>&1 | head -3 || true
+
+      - name: '4. 解包原版 boot.img'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work/orig && cd work/orig
+          cp ../boot.img .
+          ../bin/magiskboot unpack -h boot.img 2>&1 | tee unpack.txt
+          echo "--- 解包产物 ---"
+          ls -l
+          sha256sum header ramdisk.cpio kernel kernel_dtb | tee hashes_orig.txt
+          grep -E 'KERNEL_SZ|RAMDISK_SZ|KERNEL_DTB_SZ|KERNEL_FMT|RAMDISK_FMT|HEADER_VER|OS_VERSION|PAGESIZE' unpack.txt | tee bootinfo_orig.txt
+
+      - name: '5. 替换内核并 repack'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd work/orig
+          cp ../Image.gz kernel
+          ls -l kernel kernel_dtb ramdisk.cpio header
+          ../bin/magiskboot repack boot.img ../boot_sukisu.img 2>&1 | tee repack.txt
+          cd ..
+          ls -l boot_sukisu.img
+          sha256sum boot_sukisu.img | tee boot_sukisu.sha256
+
+      - name: '6. 回环自检 (header/ramdisk/dtb/指纹/体积)'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work/verify && cd work/verify
+          cp ../boot_sukisu.img .
+          ../bin/magiskboot unpack -h boot_sukisu.img 2>&1 | tee unpack_new.txt
+          ls -l
+          echo "########## 1) 解析字段对比 (最可靠) ##########"
+          grep -E 'KERNEL_SZ|RAMDISK_SZ|KERNEL_DTB_SZ|KERNEL_FMT|RAMDISK_FMT|HEADER_VER|OS_VERSION|OS_PATCH_LEVEL|PAGESIZE|CMDLINE' unpack_new.txt > info_new.txt || true
+          grep -E 'KERNEL_SZ|RAMDISK_SZ|KERNEL_DTB_SZ|KERNEL_FMT|RAMDISK_FMT|HEADER_VER|OS_VERSION|OS_PATCH_LEVEL|PAGESIZE|CMDLINE' ../orig/unpack.txt > info_old.txt || true
+          echo "--- 旧 ---"; cat info_old.txt
+          echo "--- 新 ---"; cat info_new.txt
+          echo "########## 2) CMDLINE / OS 版本必须一致 ##########"
+          for k in CMDLINE OS_VERSION OS_PATCH_LEVEL PAGESIZE; do
+            A=$(grep "^$k" info_old.txt || true); B=$(grep "^$k" info_new.txt || true)
+            if [ "$A" = "$B" ]; then echo "OK  $k 一致"; else echo "FAIL $k 不一致: [$A] vs [$B]"; exit 1; fi
+          done
+          echo "########## 3) kernel_dtb 只有一份且大小一致 ##########"
+          sha256sum kernel_dtb > dtb_new.sha256
+          echo "old: $(cat ../orig/hashes_orig.txt | grep kernel_dtb)"
+          echo "new: $(cat dtb_new.sha256)"
+          OLD_DTB=$(grep kernel_dtb ../orig/hashes_orig.txt | awk '{print $1}')
+          NEW_DTB=$(awk '{print $1}' dtb_new.sha256)
+          [ "$OLD_DTB" = "$NEW_DTB" ] && echo "OK kernel_dtb SHA256 一致" || { echo "FAIL kernel_dtb 不一致"; exit 1; }
+          echo "########## 4) ramdisk.cpio 内容 SHA256 一致 ##########"
+          sha256sum ramdisk.cpio
+          OLD_RD=$(grep ramdisk.cpio ../orig/hashes_orig.txt | awk '{print $1}')
+          NEW_RD=$(sha256sum ramdisk.cpio | awk '{print $1}')
+          [ "$OLD_RD" = "$NEW_RD" ] && echo "OK ramdisk.cpio 内容一致" || { echo "FAIL ramdisk.cpio 不一致"; exit 1; }
+          echo "########## 5) 新内核含伪装后的 Linux version ##########"
+          if head -c 2 kernel | od -An -c | grep -q '037 213'; then
+            gunzip -c kernel > kernel.raw
+          else
+            cp kernel kernel.raw
+          fi
+          V=$(strings kernel.raw | grep -m1 'Linux version')
+          echo "实际: $V"
+          echo "期望: $EXPECTED_VERSION"
+          if [ "$V" = "$EXPECTED_VERSION" ]; then echo "OK 指纹逐字节一致"; else echo "FAIL 指纹不一致"; exit 1; fi
+          case "$V" in *dirty*|*runnervm*|*SukiSU*) echo "FAIL 发现可疑字样"; exit 1;; *) echo "OK 无可疑字样";; esac
+          echo "########## 6) 体积 <= 128MB ##########"
+          SZ=$(stat -c%s boot_sukisu.img)
+          echo "size=$SZ bytes"
+          [ "$SZ" -le 134217728 ] && echo "OK 体积合规" || { echo "FAIL 超过 128MB"; exit 1; }
+          echo "########## 7) 生成 SHA256SUMS ##########"
+          cd ..
+          sha256sum boot_sukisu.img > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: '7. 上传 Artifacts'
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-sukisu-${{ github.run_number }}
+          path: |
+            work/boot_sukisu.img
+            work/SHA256SUMS.txt
+            work/verify/unpack_new.txt
+            work/orig/unpack.txt
+            work/verify/kernel.raw
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: '8. 上传到 GitHub Release'
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          REL=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")
+          REL_ID=$(echo "$REL" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+          if [ -z "$REL_ID" ]; then
+            REL_ID=$(curl -s -X POST -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github+json" \
+              -d "{\"tag_name\":\"$RELEASE_TAG\",\"name\":\"cepheus SukiSU build\",\"body\":\"boot_sukisu.img (SukiSU-Nova builtin, manual hook, stealth uname)\"}" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases" \
+              | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+          fi
+          echo "release id: $REL_ID"
+          for f in work/boot_sukisu.img work/SHA256SUMS.txt; do
+            echo "uploading $f"
+            curl -s -X POST -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$f" \
+              "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$REL_ID/assets?name=$(basename "$f")" \
+              | grep -o '"name":"[^"]*"' | head -1
+          done
+
+      - name: '9. 摘要'
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## cepheus repack"
+            echo ""
+            echo "- build run: \`$BUILD_RUN_ID\`"
+            echo "- 结果: \`${{ job.status }}\`"
+            echo "- 成品: boot_sukisu.img (Artifacts + Release \`$RELEASE_TAG\`)"
+          } >> "$GITHUB_STEP_SUMMARY"
