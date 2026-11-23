@@ -133,10 +133,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git init -q KernelSU
-          git -C KernelSU remote add origin "$SUKI_REPO"
-          git -C KernelSU fetch --depth 1 origin "$SUKI_REF"
-          git -C KernelSU checkout -q FETCH_HEAD
+          git clone "$SUKI_REPO" KernelSU
+          git -C KernelSU checkout -q "$SUKI_REF"
           ( cd KernelSU && echo "SUKI_HEAD=$(git rev-parse HEAD)" && git log -1 --pretty='%ad %s' --date=iso )
           ln -sfn "$PWD/KernelSU/kernel" kernel/drivers/kernelsu
           grep -q 'kernelsu' kernel/drivers/Makefile || printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> kernel/drivers/Makefile
@@ -219,12 +217,14 @@ jobs:
           make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 scripts prepare 2>&1 | tee ../precheck.log | tail -20
           echo "===== 预检 2/2: 单编 kernelsu + 6 个 hook 目标文件 (-k) ====="
           make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 -k -j"$(nproc)" \
-            drivers/kernelsu/ksu.o \
+            drivers/kernelsu/ \
             fs/exec.o fs/open.o fs/stat.o fs/read_write.o \
             drivers/input/input.o kernel/reboot.o 2>&1 | tee -a ../precheck.log | tail -60
           echo "===== 预检通过, 继续全量编译 ====="
           echo "--- error 行汇总 ---"
           grep -n -E 'error:|fatal error' ../precheck.log | tail -40 || echo '(无 error)'
+          echo "--- KSU 版本信息 ---"
+          grep -m5 -E 'version: |KERNEL_TYPE|KERNEL_VERSION' ../precheck.log || true
 
       - name: '10. 编译 (含 SukiSU)'
         shell: bash
