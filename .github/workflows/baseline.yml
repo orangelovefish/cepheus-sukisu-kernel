@@ -150,7 +150,7 @@ jobs:
           grep -E 'CONFIG_LOCALVERSION|CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=|CONFIG_BUILD_ARM64_DT_OVERLAY=' \
             arch/arm64/configs/cepheus_defconfig
 
-      - name: 6. 编译 (官方同参数: LLVM=1 LLVM_IAS=1)
+      - name: '6. 编译 (官方同参数 LLVM=1 LLVM_IAS=1)'
         shell: bash
         run: |
           set -o pipefail
