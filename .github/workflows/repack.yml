@@ -28,7 +28,7 @@ permissions:
 
 env:
   STOCK_TAG: ${{ github.event.inputs.stock_tag || 'stock-boot-base' }}
-  RELEASE_TAG: ${{ github.event.inputs.release_tag || 'sukisu-build-v1' }}
+  RELEASE_TAG: ${{ github.event.inputs.release_tag || 'sukisu-build-v2' }}
   BUILD_RUN_ID: ${{ github.event.inputs.build_run_id }}
   EXPECTED_VERSION: 'Linux version 4.14.353-openela-REVUELTO-//aba8883167 (celeste@PixelOS-CI) (playground clang version 17.0.0 (https://github.com/llvm/llvm-project 4f4b2161ec3cc42890aa9a445588d5a9a67e9033), LLD 17.0.0) #1 SMP PREEMPT Sat Jan 18 01:37:43 CET 2025'
 
