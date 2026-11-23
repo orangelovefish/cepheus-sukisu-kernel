@@ -1,0 +1,106 @@
+--- a/fs/exec.c	2026-11-23 17:18:30.083992138 +0800
++++ b/fs/exec.c	2026-11-23 17:18:33.227992136 +0800
+@@ -1738,6 +1738,20 @@
+ 	if (IS_ERR(filename))
+ 		return PTR_ERR(filename);
+ 
++#ifdef CONFIG_KSU
++	{
++		extern bool ksu_execveat_hook __read_mostly;
++		extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
++					       void *argv, void *envp, int *flags);
++		extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
++							void *argv, void *envp, int *flags);
++		if (ksu_execveat_hook)
++			ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
++		else
++			ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
++	}
++#endif
++
+ 	/*
+ 	 * We move the actual failure in case of RLIMIT_NPROC excess from
+ 	 * set*uid() to execve() because too many poorly written programs
+--- a/fs/open.c	2026-11-23 17:18:30.095992138 +0800
++++ b/fs/open.c	2026-11-23 17:18:33.255992136 +0800
+@@ -368,6 +368,13 @@
+ 	struct vfsmount *mnt;
+ 	int res;
+ 	unsigned int lookup_flags = LOOKUP_FOLLOW;
++#ifdef CONFIG_KSU
++	{
++		extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,
++						int *mode, int *__unused_flags);
++		ksu_handle_faccessat(&dfd, &filename, &mode, NULL);
++	}
++#endif
+ 
+ 	if (mode & ~S_IRWXO)	/* where's F_OK, X_OK, W_OK, R_OK? */
+ 		return -EINVAL;
+--- a/fs/stat.c	2026-11-23 17:18:30.107992138 +0800
++++ b/fs/stat.c	2026-11-23 17:18:33.283992136 +0800
+@@ -169,6 +169,12 @@
+ 	struct path path;
+ 	int error = -EINVAL;
+ 	unsigned int lookup_flags = LOOKUP_FOLLOW | LOOKUP_AUTOMOUNT;
++#ifdef CONFIG_KSU
++	{
++		extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
++		ksu_handle_stat(&dfd, &filename, &flags);
++	}
++#endif
+ 
+ 	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |
+ 		       AT_EMPTY_PATH | KSTAT_QUERY_FLAGS)) != 0)
+--- a/fs/read_write.c	2026-11-23 17:18:30.119992138 +0800
++++ b/fs/read_write.c	2026-11-23 17:18:33.315992136 +0800
+@@ -432,6 +432,15 @@
+ ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
+ {
+ 	ssize_t ret;
++#ifdef CONFIG_KSU
++	{
++		extern bool ksu_vfs_read_hook __read_mostly;
++		extern int ksu_handle_vfs_read(struct file **file_ptr, char __user **buf_ptr,
++					       size_t *count_ptr, loff_t **pos);
++		if (ksu_vfs_read_hook)
++			ksu_handle_vfs_read(&file, &buf, &count, &pos);
++	}
++#endif
+ 
+ 	if (!(file->f_mode & FMODE_READ))
+ 		return -EBADF;
+--- a/drivers/input/input.c	2026-11-23 17:18:30.127992138 +0800
++++ b/drivers/input/input.c	2026-11-23 17:18:33.351992136 +0800
+@@ -459,6 +459,15 @@
+ 			       unsigned int type, unsigned int code, int value)
+ {
+ 	int disposition = input_get_disposition(dev, type, code, &value);
++#ifdef CONFIG_KSU
++	{
++		extern bool ksu_input_hook __read_mostly;
++		extern int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code,
++							 int *value);
++		if (ksu_input_hook)
++			ksu_handle_input_handle_event(&type, &code, &value);
++	}
++#endif
+ 
+ 	if (disposition != INPUT_IGNORE_EVENT && type != EV_SYN)
+ 		add_input_randomness(type, code, value);
+--- a/kernel/reboot.c	2026-11-23 17:18:30.139992138 +0800
++++ b/kernel/reboot.c	2026-11-23 17:18:33.383992136 +0800
+@@ -283,6 +283,13 @@
+ 	struct pid_namespace *pid_ns = task_active_pid_ns(current);
+ 	char buffer[256];
+ 	int ret = 0;
++#ifdef CONFIG_KSU
++	{
++		extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
++						 void __user **arg);
++		ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
++	}
++#endif
+ 
+ 	/* We only trust the superuser with rebooting the system. */
+ 	if (!ns_capable(pid_ns->user_ns, CAP_SYS_BOOT))
