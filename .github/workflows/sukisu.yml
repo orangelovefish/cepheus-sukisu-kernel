@@ -184,7 +184,7 @@ jobs:
             echo "检测到 flex_array htable -> 不定义"
           fi
           echo "=== hook 落点抽查 ==="
-          grep -n 'ksu_handle_' fs/exec.c fs/open.c fs/stat.c fs/read_write.c drivers/input/input.c kernel/reboot.c
+          grep -n 'ksu_handle_' fs/exec.c fs/open.c fs/stat.c fs/read_write.c kernel/reboot.c
           echo "=== mkcompile_h 改动抽查 ==="
           grep -n 'KBUILD_BUILD_COMPILER_STRING' scripts/mkcompile_h
 
@@ -233,12 +233,10 @@ jobs:
           make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 security/selinux/ 2>&1 | tee -a ../precheck.log | tail -8
           ls -l out/security/selinux/flask.h out/security/selinux/av_permissions.h 2>/dev/null || true
 
-          echo "===== 预检 2/2: 单编 kernelsu + 6 个 hook 目标文件 (-k) ====="
+          echo "===== 预检 2/2: 单编 kernelsu + 5 个 hook 目标文件 (-k) ====="
           make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 -k -j"$(nproc)" \
             drivers/kernelsu/ \
-            fs/exec.o fs/open.o fs/stat.o fs/read_write.o \
-            drivers/input/input.o kernel/reboot.o 2>&1 | tee -a ../precheck.log | tail -60
-          echo "===== 预检通过, 继续全量编译 ====="
+            fs/exec.o fs/open.o fs/stat.o fs/read_write.o kernel/reboot.o 2>&1 | tee -a ../precheck.log | tail -60
           echo "--- error 行汇总 ---"
           grep -n -E 'error:|fatal error' ../precheck.log | tail -40 || echo '(无 error)'
           echo "--- KSU 版本信息 ---"
