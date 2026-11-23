@@ -220,6 +220,10 @@ jobs:
           echo "--- out/include/generated/compile.h ---"
           cat out/include/generated/compile.h || true
 
+          echo "===== 预检 1.8/2: 生成 selinux flask.h / av_permissions.h ====="
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 security/selinux/ 2>&1 | tee -a ../precheck.log | tail -8
+          ls -l out/security/selinux/flask.h out/security/selinux/av_permissions.h 2>/dev/null || true
+
           echo "===== 预检 2/2: 单编 kernelsu + 6 个 hook 目标文件 (-k) ====="
           make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 -k -j"$(nproc)" \
             drivers/kernelsu/ \
