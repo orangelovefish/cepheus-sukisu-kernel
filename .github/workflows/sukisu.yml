@@ -16,7 +16,7 @@ on:
       suki_ref:
         description: 'SukiSU-Nova 分支(builtin/其他)'
         required: false
-        default: 'builtin'
+        default: '4bec532dd447e2852aa8932afa768255350c103a'
       extra_kcflags:
         description: '额外 KCFLAGS (留空 = 无)'
         required: false
@@ -133,7 +133,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone --single-branch --branch "$SUKI_REF" "$SUKI_REPO" KernelSU
+          git init -q KernelSU
+          git -C KernelSU remote add origin "$SUKI_REPO"
+          git -C KernelSU fetch --depth 1 origin "$SUKI_REF"
+          git -C KernelSU checkout -q FETCH_HEAD
           ( cd KernelSU && echo "SUKI_HEAD=$(git rev-parse HEAD)" && git log -1 --pretty='%ad %s' --date=iso )
           ln -sfn "$PWD/KernelSU/kernel" kernel/drivers/kernelsu
           grep -q 'kernelsu' kernel/drivers/Makefile || printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> kernel/drivers/Makefile
@@ -161,6 +164,14 @@ jobs:
           git apply ../patches/002-stealth-uts.patch
           echo "=== 改动统计 ==="
           git diff --stat
+          echo "=== SukiSU 侧 4.14 兼容补丁 ==="
+          for p in "$GITHUB_WORKSPACE"/patches/003-*.patch; do
+            [ -f "$p" ] || continue
+            echo "--- $(basename "$p") ---"
+            git -C "$GITHUB_WORKSPACE/KernelSU" apply --check -v "$p"
+            git -C "$GITHUB_WORKSPACE/KernelSU" apply "$p"
+          done
+          git -C "$GITHUB_WORKSPACE/KernelSU" diff --stat || true
           echo "=== 写入 .scmversion 锁死 localversion ==="
           printf '%s' "$HIDE_LOCALVERSION" > .scmversion
           printf '  .scmversion = '
@@ -195,6 +206,25 @@ jobs:
           for k in CONFIG_KSU CONFIG_KPM CONFIG_KALLSYMS CONFIG_KSU_SUSFS; do
             if grep -q "^$k=y" out/.config; then echo "$k = y"; else echo "$k = n"; fi
           done
+
+      - name: '9.5 极速预检 (快速暴露 4.14 兼容性问题)'
+        shell: bash
+        run: |
+          set -o pipefail
+          cd kernel
+          export PATH="$TC_DIR/bin:$PATH"
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          echo "===== 预检 1/2: scripts prepare ====="
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 scripts prepare 2>&1 | tee ../precheck.log | tail -20
+          echo "===== 预检 2/2: 单编 kernelsu + 6 个 hook 目标文件 (-k) ====="
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 -k -j"$(nproc)" \
+            drivers/kernelsu/ksu.o \
+            fs/exec.o fs/open.o fs/stat.o fs/read_write.o \
+            drivers/input/input.o kernel/reboot.o 2>&1 | tee -a ../precheck.log | tail -60
+          echo "===== 预检通过, 继续全量编译 ====="
+          echo "--- error 行汇总 ---"
+          grep -n -E 'error:|fatal error' ../precheck.log | tail -40 || echo '(无 error)'
 
       - name: '10. 编译 (含 SukiSU)'
         shell: bash
@@ -282,6 +312,7 @@ jobs:
             kernel/out/.config
             build.log
             config.log
+            precheck.log
           if-no-files-found: warn
           retention-days: 14
 
