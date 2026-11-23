@@ -1,18 +1,16 @@
---- a/kernel/selinux/sepolicy.c	2026-11-23 18:18:18.671153653 +0800
-+++ b/kernel/selinux/sepolicy.c	2026-11-23 18:18:18.859153653 +0800
-@@ -3,6 +3,10 @@
- extern int susfs_add_sus_type(const char *secctx, u32 type_value);
- #endif // #ifdef CONFIG_KSU_SUSFS
- 
-+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 1, 0)
-+#include <linux/flex_array.h>
-+#endif
-+
- #define KSU_SUPPORT_ADD_TYPE
- 
- //////////////////////////////////////////////////////
---- a/kernel/extension/kpm/kpm.c	2026-11-23 18:18:18.703153653 +0800
-+++ b/kernel/extension/kpm/kpm.c	2026-11-23 18:18:19.003153653 +0800
+--- a/kernel/selinux/sepolicy.c	2026-11-23 18:27:41.335153251 +0800
++++ b/kernel/selinux/sepolicy.c	2026-11-23 18:27:45.215153248 +0800
+@@ -157,7 +157,7 @@
+     for (i = 0; i < db->te_avtab.nslot; i++) {
+         prev = NULL;
+         // https://github.com/torvalds/linux/commit/acdf52d97f824019888422842757013b37441dd1
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0) || defined(KSU_AVTAB_HTABLE_IS_ARRAY) /* cepheus 4.14.353 already backported array-based htable */
+         for (n = db->te_avtab.htable[i]; n; prev = n, n = n->next) {
+             if (n != node)
+                 continue;
+--- a/kernel/extension/kpm/kpm.c	2026-11-23 18:27:41.355153251 +0800
++++ b/kernel/extension/kpm/kpm.c	2026-11-23 18:27:41.511153250 +0800
 @@ -14,6 +14,11 @@
  #include "compact.h"
  #include "bridge.h"
