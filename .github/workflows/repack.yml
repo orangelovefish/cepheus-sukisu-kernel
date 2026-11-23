@@ -92,7 +92,8 @@ jobs:
         run: |
           set -euo pipefail
           test -f work/System.map
-          for s in ksu_handle_sys_reboot ksu_handle_execveat ksu_handle_execveat_sucompat ksu_handle_faccessat ksu_handle_stat ksu_handle_vfs_read ksu_handle_input_handle_event; do
+          echo "NOTE: ksu_handle_input_handle_event 在 builtin 里是 dead stub, Safe Mode 实际用运行时 input_handler"
+          for s in ksu_handle_sys_reboot ksu_handle_execveat ksu_handle_execveat_sucompat ksu_handle_faccessat ksu_handle_stat ksu_handle_vfs_read vol_detector_event vol_detector_connect; do
             line=$(grep -E " $s\$" work/System.map | head -1 || true)
             if [ -n "$line" ]; then echo "OK   $s  ->  $line"; else echo "FAIL 缺少符号 $s"; exit 1; fi
           done
