@@ -1,0 +1,359 @@
+# ============================================================
+# cepheus / PixelOS 17 (A17) / Linux 4.14.357-openela
+# SukiSU-Nova builtin + 原树 SUSFS v2.3.0 (保守 S1)
+#   - 保留 uwu-a17 全部原树钩子与 SUSFS
+#   - 仅替换 drivers/kernelsu 为 SukiSU
+#   - 逐字节指纹伪装 (burak@victus / clang 22.0.2 / Mon Nov 16 21:18:15 +03 2026)
+# ============================================================
+name: cepheus-sukisu-a17
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_ref:
+        description: '内核分支'
+        required: false
+        default: 'oxygenng/uwu-a17'
+      kernelsu_ref:
+        description: 'SukiSU-Nova 分支'
+        required: false
+        default: 'builtin'
+      extra_kcflags:
+        description: '额外 KCFLAGS (留空=无)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  KERNEL_REPO: 'https://github.com/OxygenNG/android_kernel_xiaomi_sm8150.git'
+  KERNEL_REF: ${{ github.event.inputs.kernel_ref || 'oxygenng/uwu-a17' }}
+  KSU_REPO: 'https://github.com/SukiSU-Nova/SukiSU-Nova.git'
+  KSU_REF: ${{ github.event.inputs.kernelsu_ref || 'builtin' }}
+  AOSP_CLANG_URL: 'https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r530567.tar.gz'
+  KBUILD_BUILD_USER: 'burak'
+  KBUILD_BUILD_HOST: 'victus'
+  KBUILD_BUILD_TIMESTAMP: 'Mon Nov 16 21:18:15 +03 2026'
+  KBUILD_BUILD_COMPILER_STRING: 'Android (15071444, +pgo, +bolt, +lto, +mlgo, based on r596125) clang version 22.0.2 (https://android.googlesource.com/toolchain/llvm-project de03d430485c884861198b25459851f429cbdbad)'
+  KBUILD_BUILD_LD_STRING: 'LLD 22.0.2 (/mnt/disks/build-disk/src/googleplex-android/llvm-r596125-release/out/llvm-project/llvm de03d430485c884861198b25459851f429cbdbad)'
+  SCM_VERSION: '-g36f369fdb773'
+
+jobs:
+  build:
+    name: sukisu-a17-4.14.357
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    steps:
+      - name: '0. 检出本仓库 (获取 patches-a17/)'
+        uses: actions/checkout@v4
+
+      - name: '1. 环境与补丁清单'
+        shell: bash
+        run: |
+          uname -a
+          echo "cores=$(nproc)"
+          free -h
+          df -h /
+          echo "--- patches-a17 ---"
+          ls -l patches-a17/ || true
+          echo "--- shim ---"
+          ls -l patches-a17/susfs-shim.c 2>/dev/null || echo "(shim 未随仓上传)"
+
+      - name: '2. 释放磁盘空间'
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          sudo docker image prune -af || true
+          df -h /
+
+      - name: '3. 安装编译依赖'
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            bc bison build-essential ccache cpio curl flex git libelf-dev libssl-dev \
+            lz4 lzop python3 rsync xz-utils zip unzip zstd device-tree-compiler
+
+      - name: '4. 还原工具链缓存'
+        id: tc-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/toolchains
+          key: cepheus-a17-clang-r530567-v1
+
+      - name: '5. 准备工具链 (clang-r530567 + 伪装为 clang 22.0.2)'
+        shell: bash
+        run: |
+          set -uo pipefail
+          TC_AOSP="$HOME/toolchains/aosp"
+          mkdir -p "$HOME/toolchains"
+          if [ ! -x "$TC_AOSP/bin/clang" ]; then
+            if curl -fSL --retry 3 --retry-delay 5 --connect-timeout 30 \
+                 -o "$RUNNER_TEMP/clang.tar.gz" "$AOSP_CLANG_URL"; then
+              mkdir -p "$TC_AOSP"
+              tar -xzf "$RUNNER_TEMP/clang.tar.gz" -C "$TC_AOSP"
+            else
+              echo "::error::工具链下载失败"; exit 1
+            fi
+          fi
+          echo "TC_DIR=$TC_AOSP" >> "$GITHUB_ENV"
+          "$TC_AOSP/bin/clang" --version
+          echo "NOTE: 实际编译器版本会通过 KBUILD_BUILD_COMPILER_STRING 伪装成原版 clang 22.0.2"
+
+      - name: '6. 拉取内核源码'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p kernel && cd kernel
+          git init -q
+          git remote add origin "$KERNEL_REPO"
+          git fetch --depth 1 origin "$KERNEL_REF"
+          git checkout -q FETCH_HEAD
+          git config user.email "ci@cepheus.local"
+          git config user.name "cepheus-ci"
+          echo "HEAD=$(git rev-parse HEAD)"
+          head -6 Makefile
+          echo "--- 关键 config 文件 ---"
+          ls -l arch/arm64/configs/vendor/sm8150_defconfig
+          ls -l arch/arm64/configs/vendor/xiaomi/cepheus.config
+
+      - name: '7. 移除原树 KernelSU 并挂载 SukiSU'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== 原树 drivers/kernelsu 状态 ==="
+          ls -ld kernel/drivers/kernelsu 2>/dev/null || echo "(不存在)"
+          echo "=== 先备份原实现到 /tmp 备查 ==="
+          cp -r kernel/drivers/kernelsu "$RUNNER_TEMP/kernelsu-orig" 2>/dev/null || true
+          rm -rf kernel/drivers/kernelsu
+          echo "=== 克隆 SukiSU-Nova ==="
+          git clone --single-branch --branch "$KSU_REF" "$KSU_REPO" SukiSU
+          ( cd SukiSU && echo "KSU_HEAD=$(git rev-parse HEAD)" && git log -1 --pretty='%ad %s' --date=iso )
+          ln -sfn "$PWD/SukiSU/kernel" kernel/drivers/kernelsu
+          echo "=== 修正 drivers/Makefile 与 Kconfig ==="
+          grep -q 'kernelsu' kernel/drivers/Makefile || printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> kernel/drivers/Makefile
+          grep -q 'drivers/kernelsu/Kconfig' kernel/drivers/Kconfig || sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' kernel/drivers/Kconfig
+          tail -3 kernel/drivers/Makefile
+          tail -3 kernel/drivers/Kconfig
+          ls -l kernel/drivers/kernelsu | head -5
+
+      - name: '8. 应用补丁 (SukiSU 侧兼容修复)'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd kernel
+          echo "=== 内核侧: 指纹伪装 mkcompile_h ==="
+          git apply --check -v ../patches-a17/001-a17-stealth-uts.patch
+          git apply ../patches-a17/001-a17-stealth-uts.patch
+          echo "=== 内核侧: 写入 .scmversion 防 -dirty ==="
+          printf '%s' "$SCM_VERSION" > .scmversion
+          printf '  .scmversion = '; cat .scmversion; printf '\n'
+          echo "=== SukiSU 侧补丁 ==="
+          for p in "$GITHUB_WORKSPACE"/patches-a17/002-*.patch "$GITHUB_WORKSPACE"/patches-a17/003-*.patch; do
+            [ -f "$p" ] || continue
+            echo "--- $(basename "$p") ---"
+            git -C "$GITHUB_WORKSPACE/SukiSU" apply --check -v "$p" || { echo "::error::补丁 $(basename $p) 校验失败"; exit 1; }
+            git -C "$GITHUB_WORKSPACE/SukiSU" apply "$p"
+          done
+          echo "=== 追加 SUSFS API shim ==="
+          if [ -f "$GITHUB_WORKSPACE/patches-a17/susfs-shim.c" ]; then
+            {
+              echo ""
+              echo "/* ===== CI-appended SukiSU compat shims ===== */"
+              cat "$GITHUB_WORKSPACE/patches-a17/susfs-shim.c"
+            } >> fs/susfs.c
+            echo "shim 已追加到 fs/susfs.c (末 5 行):"
+            tail -5 fs/susfs.c
+          else
+            echo "::warning::shim 未找到"
+          fi
+          echo "=== 改动统计 ==="
+          git status --short | head -20
+
+      - name: '9. 配置 defconfig (合并 base + 碎片 + 隐蔽项)'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$TC_DIR/bin:$PATH"
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          cd kernel
+          echo "=== 生成隐蔽项碎片 ==="
+          cat > /tmp/stealth.config <<'CFGEOF'
+CONFIG_KSU=y
+CONFIG_KSU_SUSFS=y
+CONFIG_KSU_SUSFS_SUS_PATH=y
+CONFIG_KSU_SUSFS_SUS_MOUNT=y
+CONFIG_KSU_SUSFS_SUS_KSTAT=y
+CONFIG_KSU_SUSFS_SUS_MAP=y
+CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+# CONFIG_KSU_SUSFS_ENABLE_LOG is not set
+# CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS is not set
+# CONFIG_KSU_DEBUG is not set
+# CONFIG_KPM is not set
+# CONFIG_KALLSYMS is not set
+# CONFIG_KALLSYMS_ALL is not set
+# CONFIG_IKCONFIG is not set
+# CONFIG_IKCONFIG_PROC is not set
+CONFIG_LOCALVERSION="-Dev"
+# CONFIG_LOCALVERSION_AUTO is not set
+CFGEOF
+          wc -l /tmp/stealth.config
+          echo "=== 用 merge_config.sh 合并 base + cepheus 碎片 + 隐蔽项 ==="
+          if [ -f scripts/kconfig/merge_config.sh ]; then
+            ARCH=arm64 scripts/kconfig/merge_config.sh -m -O out \
+              arch/arm64/configs/vendor/sm8150_defconfig \
+              arch/arm64/configs/vendor/xiaomi/cepheus.config \
+              /tmp/stealth.config 2>&1 | tail -20
+            echo "--- 生成 out/.config ---"
+            ls -l out/.config
+          else
+            echo "::error::merge_config.sh 不存在"
+            exit 1
+          fi
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig 2>&1 | tail -15
+          echo "=========== KSU / SUSFS / KALLSYMS / IKCONFIG 生效项 ==========="
+          grep -E '^CONFIG_(KSU|KPM|KALLSYMS|IKCONFIG|LOCALVERSION)' out/.config | sort
+          echo "=========== 关键判定 ==========="
+          for k in CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_ENABLE_LOG CONFIG_KSU_DEBUG CONFIG_KPM CONFIG_KALLSYMS CONFIG_KALLSYMS_ALL CONFIG_IKCONFIG CONFIG_IKCONFIG_PROC CONFIG_LOCALVERSION_AUTO; do
+            if grep -q "^$k=y" out/.config; then echo "$k = y"
+            elif grep -q "^# $k is not set" out/.config; then echo "$k = n"
+            else echo "$k = (未出现)"; fi
+          done
+          echo "=========== LOCALVERSION 值 ==========="
+          grep "^CONFIG_LOCALVERSION=" out/.config || true
+
+      - name: '9.5 极速预检 (kernelsu + susfs + 7 个钩子文件)'
+        shell: bash
+        run: |
+          set -o pipefail
+          cd kernel
+          export PATH="$TC_DIR/bin:$PATH"
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          echo "=== 预检 1/3: scripts prepare ==="
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 scripts prepare 2>&1 | tail -10
+          echo "=== 预检 2/3: init/version.o (生成 compile.h) ==="
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 init/version.o 2>&1 | tail -5
+          cat out/include/generated/compile.h 2>/dev/null || true
+          echo "=== 预检 3/3: security/selinux (生成 flask.h) ==="
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 security/selinux/ 2>&1 | tail -8
+          echo "=== 预检 4/4: kernelsu + susfs + 钩子文件 (-k) ==="
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 -k -j"$(nproc)" \
+            drivers/kernelsu/ \
+            fs/susfs.o \
+            fs/exec.o fs/open.o fs/stat.o fs/read_write.o fs/namespace.o \
+            kernel/reboot.o drivers/input/input.o \
+            2>&1 | tee -a ../precheck.log | tail -80
+          echo "=== error 汇总 ==="
+          grep -n -E 'error:|fatal error|undefined!' ../precheck.log | tail -50 || echo '(无 error)'
+          echo "=== SukiSU 版本信息 ==="
+          grep -m5 -E 'version:|KERNEL_TYPE' ../precheck.log || true
+
+      - name: '10. 全量编译'
+        shell: bash
+        run: |
+          set -o pipefail
+          cd kernel
+          export PATH="$TC_DIR/bin:$PATH"
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          EXTRA="${{ github.event.inputs.extra_kcflags }}"
+          echo "clang   : $(command -v clang)"
+          echo "buildby : $KBUILD_BUILD_USER@$KBUILD_BUILD_HOST"
+          echo "stamp   : $KBUILD_BUILD_TIMESTAMP"
+          if [ -n "$EXTRA" ]; then
+            make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 -j"$(nproc)" KCFLAGS="$EXTRA" 2>&1 | tee ../build.log
+          else
+            make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 -j"$(nproc)" 2>&1 | tee ../build.log
+          fi
+          echo "===== 编译成功 ====="
+
+      - name: '11. 验收检查'
+        if: always()
+        shell: bash
+        run: |
+          BOOT=kernel/out/arch/arm64/boot
+          echo "########## 产物 ##########"
+          ls -lh "$BOOT" 2>/dev/null || echo "(无产物)"
+          echo
+          echo "########## kernelsu 目标文件 ##########"
+          ls -l kernel/out/drivers/kernelsu/ 2>/dev/null | head -10
+          echo
+          echo "########## susfs 目标文件 ##########"
+          ls -l kernel/out/fs/susfs.o 2>/dev/null || echo "(无 susfs.o)"
+          echo
+          echo "########## System.map 关键符号 ##########"
+          for s in ksu_handle_sys_reboot ksu_handle_execveat ksu_handle_faccessat ksu_handle_stat ksu_handle_sys_read susfs_init susfs_add_sus_path vol_detector_event; do
+            n=$(grep -c " $s\$" kernel/out/System.map 2>/dev/null || echo 0)
+            printf "%-32s %s\n" "$s" "$n"
+          done
+          echo "ksu 符号总数: $(grep -c ksu kernel/out/System.map 2>/dev/null || echo 0)"
+          echo "susfs 符号总数: $(grep -c susfs kernel/out/System.map 2>/dev/null || echo 0)"
+          echo
+          echo "########## 内核指纹 (关键) ##########"
+          V=$(strings "$BOOT/Image" 2>/dev/null | grep -m1 'Linux version 4\.14\.357' || true)
+          echo "实际: $V"
+          case "$V" in
+            *burak@victus*) echo "OK 构建者伪装命中";;
+            *) echo "WARN 构建者未伪装";;
+          esac
+          case "$V" in
+            *dirty*) echo "FAIL 含 dirty";;
+            *) echo "OK 无 dirty";;
+          esac
+          case "$V" in
+            *clang\ version\ 22.0.2*) echo "OK 编译器伪装命中";;
+            *) echo "WARN 编译器串未命中";;
+          esac
+          echo
+          echo "########## 镜像头 ##########"
+          for f in "$BOOT/Image" "$BOOT/Image.gz" "$BOOT/Image.gz-dtb"; do
+            [ -f "$f" ] || continue
+            echo "--- $(basename "$f") | $(stat -c%s "$f") B ---"
+            od -A x -t x1z -N 32 "$f" 2>/dev/null || od -A x -t x1 -N 32 "$f"
+          done
+
+      - name: '12. 失败时提取报错'
+        if: failure()
+        shell: bash
+        run: |
+          echo "########## error 行 ##########"
+          grep -n -E 'error:|fatal error|undefined!' build.log precheck.log 2>/dev/null | tail -100 || true
+          echo "########## build.log 末尾 120 行 ##########"
+          tail -120 build.log 2>/dev/null || true
+
+      - name: '13. 上传产物与日志'
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a17-sukisu-${{ github.run_number }}
+          path: |
+            kernel/out/arch/arm64/boot/Image
+            kernel/out/arch/arm64/boot/Image.gz
+            kernel/out/arch/arm64/boot/Image.gz-dtb
+            kernel/out/arch/arm64/boot/dtbo.img
+            kernel/out/System.map
+            kernel/out/.config
+            build.log
+            precheck.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: '14. 运行摘要'
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## cepheus A17 SukiSU (S1)"
+            echo ""
+            echo "- 内核: \`$KERNEL_REF\`"
+            echo "- SukiSU: \`$KSU_REF\`"
+            echo "- SUSFS: 原树 v2.3.0 (保留)"
+            echo "- 结果: \`${{ job.status }}\`"
+            echo "- 隐蔽: ENABLE_LOG=n / KSU_DEBUG=n / KPM=n / KALLSYMS=n / IKCONFIG=n"
+          } >> "$GITHUB_STEP_SUMMARY"
