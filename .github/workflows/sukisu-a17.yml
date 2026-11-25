@@ -181,28 +181,28 @@ jobs:
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           cd kernel
           echo "=== 生成隐蔽项碎片 ==="
-          cat > /tmp/stealth.config <<'CFGEOF'
-CONFIG_KSU=y
-CONFIG_KSU_SUSFS=y
-CONFIG_KSU_SUSFS_SUS_PATH=y
-CONFIG_KSU_SUSFS_SUS_MOUNT=y
-CONFIG_KSU_SUSFS_SUS_KSTAT=y
-CONFIG_KSU_SUSFS_SUS_MAP=y
-CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-# CONFIG_KSU_SUSFS_ENABLE_LOG is not set
-# CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS is not set
-# CONFIG_KSU_DEBUG is not set
-# CONFIG_KPM is not set
-# CONFIG_KALLSYMS is not set
-# CONFIG_KALLSYMS_ALL is not set
-# CONFIG_IKCONFIG is not set
-# CONFIG_IKCONFIG_PROC is not set
-CONFIG_LOCALVERSION="-Dev"
-# CONFIG_LOCALVERSION_AUTO is not set
-CFGEOF
+          : > /tmp/stealth.config
+          echo 'CONFIG_KSU=y' >> /tmp/stealth.config
+          echo 'CONFIG_KSU_SUSFS=y' >> /tmp/stealth.config
+          echo 'CONFIG_KSU_SUSFS_SUS_PATH=y' >> /tmp/stealth.config
+          echo 'CONFIG_KSU_SUSFS_SUS_MOUNT=y' >> /tmp/stealth.config
+          echo 'CONFIG_KSU_SUSFS_SUS_KSTAT=y' >> /tmp/stealth.config
+          echo 'CONFIG_KSU_SUSFS_SUS_MAP=y' >> /tmp/stealth.config
+          echo 'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y' >> /tmp/stealth.config
+          echo 'CONFIG_KSU_SUSFS_SPOOF_UNAME=y' >> /tmp/stealth.config
+          echo 'CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y' >> /tmp/stealth.config
+          echo '# CONFIG_KSU_SUSFS_ENABLE_LOG is not set' >> /tmp/stealth.config
+          echo '# CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS is not set' >> /tmp/stealth.config
+          echo '# CONFIG_KSU_DEBUG is not set' >> /tmp/stealth.config
+          echo '# CONFIG_KPM is not set' >> /tmp/stealth.config
+          echo '# CONFIG_KALLSYMS is not set' >> /tmp/stealth.config
+          echo '# CONFIG_KALLSYMS_ALL is not set' >> /tmp/stealth.config
+          echo '# CONFIG_IKCONFIG is not set' >> /tmp/stealth.config
+          echo '# CONFIG_IKCONFIG_PROC is not set' >> /tmp/stealth.config
+          echo 'CONFIG_LOCALVERSION="-Dev"' >> /tmp/stealth.config
+          echo '# CONFIG_LOCALVERSION_AUTO is not set' >> /tmp/stealth.config
           wc -l /tmp/stealth.config
+          cat /tmp/stealth.config
           echo "=== 用 merge_config.sh 合并 base + cepheus 碎片 + 隐蔽项 ==="
           if [ -f scripts/kconfig/merge_config.sh ]; then
             ARCH=arm64 scripts/kconfig/merge_config.sh -m -O out \
