@@ -1,0 +1,34 @@
+--- a/kernel/selinux/sepolicy.c	2026-11-23 18:27:41.335153251 +0800
++++ b/kernel/selinux/sepolicy.c	2026-11-23 18:27:45.215153248 +0800
+@@ -157,7 +157,7 @@
+     for (i = 0; i < db->te_avtab.nslot; i++) {
+         prev = NULL;
+         // https://github.com/torvalds/linux/commit/acdf52d97f824019888422842757013b37441dd1
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0) || defined(KSU_AVTAB_HTABLE_IS_ARRAY) /* cepheus 4.14.353 already backported array-based htable */
+         for (n = db->te_avtab.htable[i]; n; prev = n, n = n->next) {
+             if (n != node)
+                 continue;
+--- a/kernel/extension/kpm/kpm.c	2026-11-23 18:27:41.355153251 +0800
++++ b/kernel/extension/kpm/kpm.c	2026-11-23 18:27:41.511153250 +0800
+@@ -14,6 +14,11 @@
+ #include "compact.h"
+ #include "bridge.h"
+ 
++/* 4.14 compat: u64_to_user_ptr() only exists on newer kernels */
++#ifndef u64_to_user_ptr
++#define u64_to_user_ptr(x) ((void __user *)(uintptr_t)(x))
++#endif
++
+ #define KPM_NAME_LEN 32
+ #define KPM_ARGS_LEN 1024
+ #define KPM_PATH_LEN 1024
+@@ -179,7 +184,7 @@
+     int result;
+     /* Called only through the manager_or_root-authorized extension ioctl. */
+     if (copy_from_user(&cmd, arg, sizeof(cmd))) return -EFAULT;
+-    if (!access_ok(u64_to_user_ptr(cmd.result_code), sizeof(result))) return -EFAULT;
++    if (!ksu_access_ok(u64_to_user_ptr(cmd.result_code), sizeof(result))) return -EFAULT;
+     result = handle_kpm(&cmd);
+     return copy_to_user(u64_to_user_ptr(cmd.result_code), &result, sizeof(result)) ? -EFAULT : 0;
+ }
