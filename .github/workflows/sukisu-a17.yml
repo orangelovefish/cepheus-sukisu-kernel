@@ -204,6 +204,7 @@ jobs:
           wc -l /tmp/stealth.config
           cat /tmp/stealth.config
           echo "=== 用 merge_config.sh 合并 base + cepheus 碎片 + 隐蔽项 ==="
+          mkdir -p out
           if [ -f scripts/kconfig/merge_config.sh ]; then
             ARCH=arm64 scripts/kconfig/merge_config.sh -m -O out \
               arch/arm64/configs/vendor/sm8150_defconfig \
