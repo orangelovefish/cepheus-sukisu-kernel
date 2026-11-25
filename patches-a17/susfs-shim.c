@@ -10,7 +10,6 @@
 #include <linux/uaccess.h>
 
 void susfs_set_current_proc_no_su(void) { }
-void susfs_set_current_proc_umounted(void) { }
 void susfs_set_current_proc_umounted_for_zygote_next(void) { }
 
 bool susfs_is_current_zygote_domain(void) { return false; }
@@ -24,8 +23,6 @@ void susfs_set_sid(void __user **user_info) { }
 void susfs_set_batch_sid(void __user **user_info) { }
 
 int susfs_io(void __user *arg) { return -EOPNOTSUPP; }
-int susfs_get(void __user *arg) { return -EOPNOTSUPP; }
-int susfs_set(void __user *arg) { return -EOPNOTSUPP; }
 int susfs_wipe(void __user *arg) { return -EOPNOTSUPP; }
 int susfs_apply_forced(void *arg) { return -EOPNOTSUPP; }
 
