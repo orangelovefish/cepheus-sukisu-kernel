@@ -1,13 +1,16 @@
---- a/kernel/feature/sucompat.c	2026-11-27 10:05:44.362825195 +0800
-+++ b/kernel/feature/sucompat.c	2026-11-27 10:08:44.126825066 +0800
-@@ -217,6 +217,80 @@
+--- a/kernel/feature/sucompat.c
++++ b/kernel/feature/sucompat.c
+@@ -217,6 +217,92 @@
      return 0;
  }
  
 +/*
 + * ---- 4.14 raw-signature helpers (shared by both SUSFS and non-SUSFS) ----
-+ * ksu_sucompat_user_common() rewrites *filename_user via sh_user_path(),
-+ * so no getname()/putname() is needed: zero extra path copies.
++ * ksu_raw_user_common() rewrites *filename_user via sh_user_path(), so no
++ * getname()/putname() is needed: zero extra path copies on the syscall path.
++ * Both sh_user_path() and ksud_user_path() are guarded with IS_ERR_OR_NULL()
++ * so an allocation/copy failure can never store an illegal pointer into the
++ * caller's filename argument (prevents a NULL-deref panic in vfs_fstatat).
 + */
 +__attribute__((hot)) static __always_inline bool __ksu_raw_is_su_allowed(const void **ptr_to_check)
 +{
@@ -45,19 +48,28 @@
 +        return ret;
 +
 +    {
++        const char __user *p;
 +        struct path kpath;
 +        if (!!kern_path(ksud_path, 0, &kpath))
 +            goto no_ksud;
 +        path_put(&kpath);
++        p = ksud_user_path();
++        if (IS_ERR_OR_NULL(p))
++            return 0;
 +        pr_info("%s su->ksud!\n", syscall_name);
-+        *filename_user = ksud_user_path();
++        *filename_user = p;
 +        return 0;
 +    }
 +
 +no_ksud:
 +no_escalate:
-+    pr_info("%s su->sh!\n", syscall_name);
-+    *filename_user = sh_user_path();
++    {
++        const char __user *p = sh_user_path();
++        if (IS_ERR_OR_NULL(p))
++            return 0;
++        pr_info("%s su->sh!\n", syscall_name);
++        *filename_user = p;
++    }
 +    return 0;
 +}
 +
