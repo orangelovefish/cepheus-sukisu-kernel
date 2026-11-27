@@ -161,12 +161,19 @@ jobs:
           git apply ../patches-a17/007-a17-read-hook-rename.patch
           grep -n ksu_vfs_read_hook fs/read_write.c
           echo "=== SukiSU 侧补丁 ==="
-          for p in "$GITHUB_WORKSPACE"/patches-a17/002-*.patch "$GITHUB_WORKSPACE"/patches-a17/003-*.patch "$GITHUB_WORKSPACE"/patches-a17/005-*.patch "$GITHUB_WORKSPACE"/patches-a17/006-*.patch "$GITHUB_WORKSPACE"/patches-a17/008-*.patch; do
+          for p in "$GITHUB_WORKSPACE"/patches-a17/002-*.patch "$GITHUB_WORKSPACE"/patches-a17/003-*.patch "$GITHUB_WORKSPACE"/patches-a17/005-*.patch "$GITHUB_WORKSPACE"/patches-a17/006-*.patch "$GITHUB_WORKSPACE"/patches-a17/008-*.patch "$GITHUB_WORKSPACE"/patches-a17/009-*.patch; do
             [ -f "$p" ] || continue
             echo "--- $(basename "$p") ---"
             git -C "$GITHUB_WORKSPACE/SukiSU" apply --check -v "$p" || { echo "::error::补丁 $(basename $p) 校验失败"; exit 1; }
             git -C "$GITHUB_WORKSPACE/SukiSU" apply "$p"
           done
+          echo "=== 补丁结果实证 (M2/M3/M4/E1) ==="
+          echo "--- M2: sucompat.c 不应再有 'mark no sucompat' 打印 ---"
+          grep -n 'mark no sucompat' SukiSU/kernel/feature/sucompat.c || echo "(已彻底移除: 0 处)"
+          echo "--- M3/M4: 两处 IS_ERR_OR_NULL 保护 ---"
+          grep -n 'IS_ERR_OR_NULL(p)' SukiSU/kernel/feature/sucompat.c
+          echo "--- E1: rc 代理挂载后关闭 sys_read 钩子 ---"
+          grep -n -B2 -A2 'ksu_vfs_read_hook = false' SukiSU/kernel/runtime/ksud.c
           echo "=== 追加 SUSFS API shim (实现 -> fs/susfs.c, 声明 -> include/linux/susfs.h) ==="
           if [ -f "$GITHUB_WORKSPACE/patches-a17/susfs-shim.c" ]; then
             {
@@ -241,6 +248,9 @@ jobs:
           echo '# CONFIG_IKCONFIG is not set' >> /tmp/stealth.config
           echo '# CONFIG_IKCONFIG_PROC is not set' >> /tmp/stealth.config
           echo 'CONFIG_LOCALVERSION="-Dev"' >> /tmp/stealth.config
+          # M1: 保留原包 CONFIG_LOCALVERSION_AUTO=y，配合 .scmversion="-g36f369fdb773"
+          # 精确还原 4.14.357-openela-Dev-g36f369fdb773（不再出现 -Dev+）
+          echo 'CONFIG_LOCALVERSION_AUTO=y' >> /tmp/stealth.config
           wc -l /tmp/stealth.config
           echo "=== B-1: 以原包 .config 为底座 ==="
           gunzip -c "$GITHUB_WORKSPACE/patches-a17/orig_a17.config.gz" > out/.config
@@ -256,21 +266,57 @@ jobs:
           echo "=========== 最终触控/FTS 留证 ==========="
           grep -iE '^CONFIG_TOUCHSCREEN_ST|^# CONFIG_TOUCHSCREEN_ST is|^CONFIG_FTS|^# CONFIG_TOUCHSCREEN_ST_FTS' out/.config || true
           echo "=========== 关键判定 ==========="
-          for k in CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_ENABLE_LOG CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER CONFIG_KSU_DEBUG CONFIG_KPM CONFIG_KALLSYMS CONFIG_KALLSYMS_ALL CONFIG_IKCONFIG CONFIG_IKCONFIG_PROC; do
+          for k in CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_ENABLE_LOG CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER CONFIG_KSU_DEBUG CONFIG_KPM CONFIG_KALLSYMS CONFIG_KALLSYMS_ALL CONFIG_IKCONFIG CONFIG_IKCONFIG_PROC CONFIG_LOCALVERSION_AUTO; do
             if grep -q "^$k=y" out/.config; then echo "$k = y"
             elif grep -q "^# $k is not set" out/.config; then echo "$k = n"
             else echo "$k = (未出现)"; fi
           done
           echo "=========== LOCALVERSION 值 ==========="
           grep "^CONFIG_LOCALVERSION=" out/.config || true
+          echo "=========== M1 断言: CONFIG_LOCALVERSION_AUTO 必须为 y ==========="
+          if grep -q '^CONFIG_LOCALVERSION_AUTO=y' out/.config; then
+            echo "OK CONFIG_LOCALVERSION_AUTO = y (由 .scmversion 提供 -g36f369fdb773，不会产生 -Dev+)"
+          else
+            echo "::error::CONFIG_LOCALVERSION_AUTO 不是 y，会导致版本串缺少 -g36f369fdb773"
+            grep -n 'LOCALVERSION' out/.config || true
+            exit 1
+          fi
+          echo "=========== .scmversion 留证 ==========="
+          printf '.scmversion = ['; cat .scmversion; printf ']\n'
           echo "=========== 版本串硬断言 (必须精确等于原包) ==========="
-          KR=$(make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 kernelrelease 2>/dev/null | tail -1)
-          echo "kernelrelease = [$KR]"
+          # 4.14 的子 make 会把 "make[1]: Entering/Leaving directory" 打到 stdout，
+          # 这不是 stderr，2>/dev/null 屏蔽不掉 —— 必须 --no-print-directory + 正则过滤，
+          # 并同时读权威文件 out/include/config/kernel.release 交叉验证。
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 include/config/kernel.release >/dev/null 2>&1 || true
+          KRF=""
+          [ -f out/include/config/kernel.release ] && KRF=$(tr -d '\n' < out/include/config/kernel.release)
+          KR=$(make --no-print-directory -s O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 kernelrelease 2>/dev/null \
+               | grep -E '^[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
+          echo "kernel.release 文件 = [$KRF]"
+          echo "kernelrelease 目标  = [$KR]"
+          if [ -n "$KRF" ] && [ "$KRF" != "4.14.357-openela-Dev-g36f369fdb773" ]; then
+            echo "::error::kernel.release 不匹配！期望 4.14.357-openela-Dev-g36f369fdb773，实际 [$KRF]"
+            exit 1
+          fi
           if [ "$KR" != "4.14.357-openela-Dev-g36f369fdb773" ]; then
             echo "::error::版本串不匹配！期望 4.14.357-openela-Dev-g36f369fdb773，实际 [$KR]"
             exit 1
           fi
-          echo "OK 版本串与原包逐字节一致"
+          echo "OK kernelrelease 与原包逐字节一致"
+          echo "=========== 二次核查: utsrelease.h ==========="
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 include/generated/utsrelease.h >/dev/null 2>&1 || true
+          UR=""
+          if [ -f out/include/generated/utsrelease.h ]; then
+            UR=$(grep -m1 '^#define UTS_RELEASE' out/include/generated/utsrelease.h | sed 's/.*"\(.*\)".*/\1/')
+          else
+            UR="$KRF"
+          fi
+          echo "UTS_RELEASE = [$UR]"
+          if [ "$UR" != "4.14.357-openela-Dev-g36f369fdb773" ]; then
+            echo "::error::UTS_RELEASE 不匹配！期望 4.14.357-openela-Dev-g36f369fdb773，实际 [$UR]"
+            exit 1
+          fi
+          echo "OK UTS_RELEASE 与原包逐字节一致"
 
       - name: '9.5 极速预检 (kernelsu + susfs + 7 个钩子文件)'
         shell: bash
@@ -369,6 +415,24 @@ jobs:
             *clang\ version\ 22.0.2*) echo "OK 编译器伪装命中";;
             *) echo "WARN 编译器串未命中";;
           esac
+          echo "########## M2 泄露串核查 (必须 0 条) ##########"
+          LK=$(strings "$BOOT/Image" 2>/dev/null | grep -c 'susfs: mark no sucompat' || true)
+          echo "susfs: mark no sucompat = $LK"
+          [ "$LK" = "0" ] && echo "OK 无 susfs 泄露串" || echo "FAIL 仍存在 susfs 泄露串"
+          echo "########## M1 版本串精确核查 ##########"
+          case "$V" in
+            "Linux version 4.14.357-openela-Dev-g36f369fdb773 "*) echo "OK 版本串逐字节命中";;
+            *) echo "FAIL 版本串不匹配";;
+          esac
+          case "$V" in
+            *-Dev+*) echo "FAIL 仍含 -Dev+";;
+            *) echo "OK 无 -Dev+";;
+          esac
+          echo "########## 隐蔽性附加核查 ##########"
+          NK=$(strings "$BOOT/Image" 2>/dev/null | grep -c 'KernelSU-Next' || true)
+          IK=$(strings "$BOOT/Image" 2>/dev/null | grep -c 'IKCFG_ST' || true)
+          echo "KernelSU-Next 串 = $NK (期望 0)"
+          echo "IKCFG_ST 串     = $IK (期望 0)"
           echo
           echo "########## 镜像头 ##########"
           for f in "$BOOT/Image" "$BOOT/Image.gz" "$BOOT/Image.gz-dtb"; do

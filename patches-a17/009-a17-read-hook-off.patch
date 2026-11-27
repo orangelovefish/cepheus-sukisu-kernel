@@ -1,0 +1,20 @@
+diff --git a/kernel/runtime/ksud.c b/kernel/runtime/ksud.c
+index 930aa46..cdf78f1 100644
+--- a/kernel/runtime/ksud.c
++++ b/kernel/runtime/ksud.c
+@@ -507,6 +507,15 @@ __attribute__((cold)) static noinline void ksu_install_rc_hook(struct file *file
+     }
+     // replace the file_operations
+     file->f_op = &fops_proxy;
++
++    // The RC proxy is now attached to this file, so every following read of
++    // init.rc goes through read_proxy/read_iter_proxy directly. The syscall
++    // fast path in fs/read_write.c (ksu_handle_sys_read -> fget/fput) is no
++    // longer needed; on this 4.14 non-GKI tree it is gated on the plain
++    // ksu_vfs_read_hook boolean which nothing else ever clears under
++    // CONFIG_KSU_SUSFS, so clear it here to stop paying fget/fput on every
++    // read() of every process.
++    ksu_vfs_read_hook = false;
+ }
+ 
+ int ksu_handle_vfs_read(struct file **file_ptr, char __user **buf_ptr, size_t *count_ptr, loff_t **pos)
