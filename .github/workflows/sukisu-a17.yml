@@ -207,7 +207,7 @@ jobs:
           echo "=== 改动统计 ==="
           git status --short | head -20
 
-      - name: '9. 配置 defconfig (合并 base + 碎片 + 隐蔽项)'
+      - name: '9. 配置 defconfig (B-1 原包config为底座)'
         shell: bash
         run: |
           set -euo pipefail
@@ -215,7 +215,8 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           cd kernel
-          echo "=== 生成隐蔽项碎片 ==="
+          mkdir -p out
+          echo "=== 生成隐蔽项覆盖碎片 ==="
           : > /tmp/stealth.config
           echo 'CONFIG_KSU=y' >> /tmp/stealth.config
           echo 'CONFIG_KSU_SUSFS=y' >> /tmp/stealth.config
@@ -238,25 +239,21 @@ jobs:
           echo 'CONFIG_LOCALVERSION="-Dev"' >> /tmp/stealth.config
           echo '# CONFIG_LOCALVERSION_AUTO is not set' >> /tmp/stealth.config
           wc -l /tmp/stealth.config
-          cat /tmp/stealth.config
-          echo "=== 用 merge_config.sh 合并 base + cepheus 碎片 + 隐蔽项 ==="
-          mkdir -p out
-          if [ -f scripts/kconfig/merge_config.sh ]; then
-            ARCH=arm64 scripts/kconfig/merge_config.sh -m -O out \
-              arch/arm64/configs/vendor/sm8150_defconfig \
-              arch/arm64/configs/vendor/xiaomi/cepheus.config \
-              /tmp/stealth.config 2>&1 | tail -20
-            echo "--- 生成 out/.config ---"
-            ls -l out/.config
-          else
-            echo "::error::merge_config.sh 不存在"
-            exit 1
-          fi
+          echo "=== B-1: 以原包 .config 为底座 ==="
+          cp "$GITHUB_WORKSPACE/patches-a17/orig_a17.config" out/.config
+          wc -l out/.config
+          echo "=== 原包触控配置留证 ==="
+          grep -iE '^CONFIG_TOUCHSCREEN_ST|^# CONFIG_TOUCHSCREEN_ST is|^CONFIG_FTS|^# CONFIG_TOUCHSCREEN_XIAOMI' out/.config || true
+          echo "=== 用 merge_config.sh 覆盖隐蔽项 ==="
+          ARCH=arm64 scripts/kconfig/merge_config.sh -m -O out out/.config /tmp/stealth.config 2>&1 | tail -20
+          echo "=== olddefconfig 适配工具链能力并清理废弃项 ==="
           make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig 2>&1 | tail -15
           echo "=========== KSU / SUSFS / KALLSYMS / IKCONFIG 生效项 ==========="
           grep -E '^CONFIG_(KSU|KPM|KALLSYMS|IKCONFIG|LOCALVERSION)' out/.config | sort
+          echo "=========== 最终触控/FTS 留证 ==========="
+          grep -iE '^CONFIG_TOUCHSCREEN_ST|^# CONFIG_TOUCHSCREEN_ST is|^CONFIG_FTS|^# CONFIG_TOUCHSCREEN_ST_FTS' out/.config || true
           echo "=========== 关键判定 ==========="
-          for k in CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_ENABLE_LOG CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER CONFIG_KSU_DEBUG CONFIG_KPM CONFIG_KALLSYMS CONFIG_KALLSYMS_ALL CONFIG_IKCONFIG CONFIG_IKCONFIG_PROC CONFIG_LOCALVERSION_AUTO; do
+          for k in CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_ENABLE_LOG CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER CONFIG_KSU_DEBUG CONFIG_KPM CONFIG_KALLSYMS CONFIG_KALLSYMS_ALL CONFIG_IKCONFIG CONFIG_IKCONFIG_PROC CONFIG_LOCALVERSION_AUTO; do
             if grep -q "^$k=y" out/.config; then echo "$k = y"
             elif grep -q "^# $k is not set" out/.config; then echo "$k = n"
             else echo "$k = (未出现)"; fi
@@ -309,6 +306,20 @@ jobs:
             make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 -j"$(nproc)" 2>&1 | tee ../build.log
           fi
           echo "===== 编译成功 ====="
+          echo "=== 镜像产物兜底 (UNCOMPRESSED_KERNEL=y 时可能只有 Image) ==="
+          BOOT=out/arch/arm64/boot
+          ls -lh "$BOOT"/Image* 2>/dev/null || true
+          if [ -f "$BOOT/Image" ] && [ ! -f "$BOOT/Image.gz" ]; then
+            echo "未生成 Image.gz，手动 gzip -9 打包"
+            gzip -9 -c "$BOOT/Image" > "$BOOT/Image.gz"
+          fi
+          if [ -f "$BOOT/Image.gz" ]; then
+            echo "--- Image.gz 就绪 ---"
+            ls -l "$BOOT/Image.gz"
+            od -A x -t x1z -N 16 "$BOOT/Image.gz" 2>/dev/null || od -A x -t x1 -N 16 "$BOOT/Image.gz"
+          else
+            echo "::error::Image.gz 未生成"; exit 1
+          fi
 
       - name: '11. 验收检查'
         if: always()
