@@ -1,48 +1,81 @@
---- a/kernel/feature/sucompat.c	2026-11-27 09:24:18.934826973 +0800
-+++ b/kernel/feature/sucompat.c	2026-11-27 09:24:41.830826956 +0800
-@@ -217,6 +217,47 @@
+--- a/kernel/feature/sucompat.c	2026-11-27 10:05:44.362825195 +0800
++++ b/kernel/feature/sucompat.c	2026-11-27 10:08:44.126825066 +0800
+@@ -217,6 +217,80 @@
      return 0;
  }
  
 +/*
-+ * ---- 4.14 raw-signature entry points (tree passes const char __user **) ----
-+ * The uwu-a17 kernel tree calls ksu_handle_stat()/ksu_handle_faccessat()
-+ * with a raw `const char __user **` instead of `struct filename **`.
-+ * These wrappers resolve the user pointer and reuse the same logic.
++ * ---- 4.14 raw-signature helpers (shared by both SUSFS and non-SUSFS) ----
++ * ksu_sucompat_user_common() rewrites *filename_user via sh_user_path(),
++ * so no getname()/putname() is needed: zero extra path copies.
 + */
++__attribute__((hot)) static __always_inline bool __ksu_raw_is_su_allowed(const void **ptr_to_check)
++{
++    if (!ksu_su_compat_enabled)
++        return false;
++    if (likely(test_thread_flag(TIF_SECCOMP)))
++        return false;
++    if (!ksu_is_allow_uid_for_current(current_uid().val))
++        return false;
++    if (unlikely(!ptr_to_check))
++        return false;
++    if (unlikely(!*ptr_to_check))
++        return false;
++    return true;
++}
++#define ksu_raw_is_su_allowed(ptr) (__ksu_raw_is_su_allowed((const void **)ptr))
++
++static noinline int ksu_raw_user_common(const char __user **filename_user,
++                                        const char *syscall_name, const bool escalate)
++{
++    char path[sizeof(su_path)] = { 0 };
++    long len = ksu_strncpy_from_user_nofault(path, *filename_user, sizeof(path));
++    int ret = 0;
++
++    if (unlikely(len <= 0))
++        return -EFAULT;
++    if (likely(memcmp(path, su_path, sizeof(su_path))))
++        return 0;
++
++    if (!escalate)
++        goto no_escalate;
++
++    ret = escape_with_root_profile();
++    if (!!ret)
++        return ret;
++
++    {
++        struct path kpath;
++        if (!!kern_path(ksud_path, 0, &kpath))
++            goto no_ksud;
++        path_put(&kpath);
++        pr_info("%s su->ksud!\n", syscall_name);
++        *filename_user = ksud_user_path();
++        return 0;
++    }
++
++no_ksud:
++no_escalate:
++    pr_info("%s su->sh!\n", syscall_name);
++    *filename_user = sh_user_path();
++    return 0;
++}
++
 +int ksu_handle_stat_raw(int *dfd, const char __user **filename_user, int *flags)
 +{
-+    struct filename *fn;
-+    int ret;
-+
-+    if (!filename_user || !*filename_user)
++    if (!ksu_raw_is_su_allowed(filename_user))
 +        return 0;
-+
-+    fn = getname(*filename_user);
-+    if (IS_ERR(fn))
-+        return 0;
-+
-+    ret = ksu_handle_stat(dfd, &fn, flags);
-+    putname(fn);
-+    return ret;
++    ksu_raw_user_common(filename_user, "newfstatat", false);
++    return 0;
 +}
 +
 +int ksu_handle_faccessat_raw(int *dfd, const char __user **filename_user,
 +                             int *mode, int *__unused_flags)
 +{
-+    struct filename *fn;
-+    int ret;
-+
-+    if (!filename_user || !*filename_user)
++    if (!ksu_raw_is_su_allowed(filename_user))
 +        return 0;
-+
-+    fn = getname(*filename_user);
-+    if (IS_ERR(fn))
-+        return 0;
-+
-+    ret = ksu_handle_faccessat(dfd, &fn, mode, __unused_flags);
-+    putname(fn);
-+    return ret;
++    ksu_raw_user_common(filename_user, "faccessat", false);
++    return 0;
 +}
 +
  #else
