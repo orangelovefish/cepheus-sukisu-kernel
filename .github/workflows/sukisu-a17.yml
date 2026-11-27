@@ -161,7 +161,7 @@ jobs:
           git apply ../patches-a17/007-a17-read-hook-rename.patch
           grep -n ksu_vfs_read_hook fs/read_write.c
           echo "=== SukiSU 侧补丁 ==="
-          for p in "$GITHUB_WORKSPACE"/patches-a17/002-*.patch "$GITHUB_WORKSPACE"/patches-a17/003-*.patch "$GITHUB_WORKSPACE"/patches-a17/005-*.patch "$GITHUB_WORKSPACE"/patches-a17/006-*.patch; do
+          for p in "$GITHUB_WORKSPACE"/patches-a17/002-*.patch "$GITHUB_WORKSPACE"/patches-a17/003-*.patch "$GITHUB_WORKSPACE"/patches-a17/005-*.patch "$GITHUB_WORKSPACE"/patches-a17/006-*.patch "$GITHUB_WORKSPACE"/patches-a17/008-*.patch; do
             [ -f "$p" ] || continue
             echo "--- $(basename "$p") ---"
             git -C "$GITHUB_WORKSPACE/SukiSU" apply --check -v "$p" || { echo "::error::补丁 $(basename $p) 校验失败"; exit 1; }
@@ -241,7 +241,6 @@ jobs:
           echo '# CONFIG_IKCONFIG is not set' >> /tmp/stealth.config
           echo '# CONFIG_IKCONFIG_PROC is not set' >> /tmp/stealth.config
           echo 'CONFIG_LOCALVERSION="-Dev"' >> /tmp/stealth.config
-          echo '# CONFIG_LOCALVERSION_AUTO is not set' >> /tmp/stealth.config
           wc -l /tmp/stealth.config
           echo "=== B-1: 以原包 .config 为底座 ==="
           gunzip -c "$GITHUB_WORKSPACE/patches-a17/orig_a17.config.gz" > out/.config
@@ -257,13 +256,21 @@ jobs:
           echo "=========== 最终触控/FTS 留证 ==========="
           grep -iE '^CONFIG_TOUCHSCREEN_ST|^# CONFIG_TOUCHSCREEN_ST is|^CONFIG_FTS|^# CONFIG_TOUCHSCREEN_ST_FTS' out/.config || true
           echo "=========== 关键判定 ==========="
-          for k in CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_ENABLE_LOG CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER CONFIG_KSU_DEBUG CONFIG_KPM CONFIG_KALLSYMS CONFIG_KALLSYMS_ALL CONFIG_IKCONFIG CONFIG_IKCONFIG_PROC CONFIG_LOCALVERSION_AUTO; do
+          for k in CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_ENABLE_LOG CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER CONFIG_KSU_DEBUG CONFIG_KPM CONFIG_KALLSYMS CONFIG_KALLSYMS_ALL CONFIG_IKCONFIG CONFIG_IKCONFIG_PROC; do
             if grep -q "^$k=y" out/.config; then echo "$k = y"
             elif grep -q "^# $k is not set" out/.config; then echo "$k = n"
             else echo "$k = (未出现)"; fi
           done
           echo "=========== LOCALVERSION 值 ==========="
           grep "^CONFIG_LOCALVERSION=" out/.config || true
+          echo "=========== 版本串硬断言 (必须精确等于原包) ==========="
+          KR=$(make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 kernelrelease 2>/dev/null | tail -1)
+          echo "kernelrelease = [$KR]"
+          if [ "$KR" != "4.14.357-openela-Dev-g36f369fdb773" ]; then
+            echo "::error::版本串不匹配！期望 4.14.357-openela-Dev-g36f369fdb773，实际 [$KR]"
+            exit 1
+          fi
+          echo "OK 版本串与原包逐字节一致"
 
       - name: '9.5 极速预检 (kernelsu + susfs + 7 个钩子文件)'
         shell: bash
