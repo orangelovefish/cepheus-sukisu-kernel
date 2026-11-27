@@ -1,5 +1,5 @@
---- kpmfix/a/kernel/kernel_compat.h	2026-11-27 11:07:37.790822539 +0800
-+++ kpmfix/b/kernel/kernel_compat.h	2026-11-27 11:07:58.798822524 +0800
+--- a/kernel/kernel_compat.h
++++ b/kernel/kernel_compat.h
 @@ -277,7 +277,7 @@
  #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
  #define KSU_CAN_USE_CPU_SPOOF
