@@ -301,9 +301,9 @@ jobs:
           echo "buildby : $KBUILD_BUILD_USER@$KBUILD_BUILD_HOST"
           echo "stamp   : $KBUILD_BUILD_TIMESTAMP"
           if [ -n "$EXTRA" ]; then
-            make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 -j"$(nproc)" KCFLAGS="$EXTRA" 2>&1 | tee ../build.log
+            make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 -j"$(nproc)" KCFLAGS="$EXTRA" Image 2>&1 | tee ../build.log
           else
-            make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 -j"$(nproc)" 2>&1 | tee ../build.log
+            make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 -j"$(nproc)" Image 2>&1 | tee ../build.log
           fi
           echo "===== 编译成功 ====="
           echo "=== 镜像产物兜底 (UNCOMPRESSED_KERNEL=y 时可能只有 Image) ==="
