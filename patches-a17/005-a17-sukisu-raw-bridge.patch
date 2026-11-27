@@ -1,0 +1,50 @@
+--- a/kernel/feature/sucompat.c	2026-11-27 09:24:18.934826973 +0800
++++ b/kernel/feature/sucompat.c	2026-11-27 09:24:41.830826956 +0800
+@@ -217,6 +217,47 @@
+     return 0;
+ }
+ 
++/*
++ * ---- 4.14 raw-signature entry points (tree passes const char __user **) ----
++ * The uwu-a17 kernel tree calls ksu_handle_stat()/ksu_handle_faccessat()
++ * with a raw `const char __user **` instead of `struct filename **`.
++ * These wrappers resolve the user pointer and reuse the same logic.
++ */
++int ksu_handle_stat_raw(int *dfd, const char __user **filename_user, int *flags)
++{
++    struct filename *fn;
++    int ret;
++
++    if (!filename_user || !*filename_user)
++        return 0;
++
++    fn = getname(*filename_user);
++    if (IS_ERR(fn))
++        return 0;
++
++    ret = ksu_handle_stat(dfd, &fn, flags);
++    putname(fn);
++    return ret;
++}
++
++int ksu_handle_faccessat_raw(int *dfd, const char __user **filename_user,
++                             int *mode, int *__unused_flags)
++{
++    struct filename *fn;
++    int ret;
++
++    if (!filename_user || !*filename_user)
++        return 0;
++
++    fn = getname(*filename_user);
++    if (IS_ERR(fn))
++        return 0;
++
++    ret = ksu_handle_faccessat(dfd, &fn, mode, __unused_flags);
++    putname(fn);
++    return ret;
++}
++
+ #else
+ __attribute__((hot)) static __always_inline bool __is_su_allowed(const void **ptr_to_check)
+ {
