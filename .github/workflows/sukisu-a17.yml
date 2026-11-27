@@ -168,12 +168,21 @@ jobs:
             git -C "$GITHUB_WORKSPACE/SukiSU" apply "$p"
           done
           echo "=== 补丁结果实证 (M2/M3/M4/E1) ==="
+          SU="$GITHUB_WORKSPACE/SukiSU"
           echo "--- M2: sucompat.c 不应再有 'mark no sucompat' 打印 ---"
-          grep -n 'mark no sucompat' SukiSU/kernel/feature/sucompat.c || echo "(已彻底移除: 0 处)"
+          if grep -n 'mark no sucompat' "$SU/kernel/feature/sucompat.c"; then
+            echo "::error::M2 失败: 仍存在 mark no sucompat"; exit 1
+          else
+            echo "OK 已彻底移除: 0 处"
+          fi
           echo "--- M3/M4: 两处 IS_ERR_OR_NULL 保护 ---"
-          grep -n 'IS_ERR_OR_NULL(p)' SukiSU/kernel/feature/sucompat.c
+          N=$(grep -c 'IS_ERR_OR_NULL(p)' "$SU/kernel/feature/sucompat.c" || true)
+          echo "IS_ERR_OR_NULL(p) 命中 = $N (期望 2)"
+          [ "$N" -ge 2 ] || { echo "::error::M3/M4 失败: 保护不足"; exit 1; }
           echo "--- E1: rc 代理挂载后关闭 sys_read 钩子 ---"
-          grep -n -B2 -A2 'ksu_vfs_read_hook = false' SukiSU/kernel/runtime/ksud.c
+          N2=$(grep -c 'ksu_vfs_read_hook = false' "$SU/kernel/runtime/ksud.c" || true)
+          echo "ksu_vfs_read_hook = false 命中 = $N2 (期望 >=2)"
+          [ "$N2" -ge 2 ] || { echo "::error::E1 失败: 未关闭 read hook"; exit 1; }
           echo "=== 追加 SUSFS API shim (实现 -> fs/susfs.c, 声明 -> include/linux/susfs.h) ==="
           if [ -f "$GITHUB_WORKSPACE/patches-a17/susfs-shim.c" ]; then
             {
@@ -387,7 +396,7 @@ jobs:
           ls -lh "$BOOT" 2>/dev/null || echo "(无产物)"
           echo
           echo "########## kernelsu 目标文件 ##########"
-          ls -l kernel/out/drivers/kernelsu/ 2>/dev/null | head -10
+          ls -l kernel/out/drivers/kernelsu/ 2>/dev/null | head -10 || true
           echo
           echo "########## susfs 目标文件 ##########"
           ls -l kernel/out/fs/susfs.o 2>/dev/null || echo "(无 susfs.o)"
