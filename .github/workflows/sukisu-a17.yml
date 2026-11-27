@@ -157,7 +157,7 @@ jobs:
           grep -n ksu_handle_stat_raw fs/stat.c | head -5
           grep -n ksu_handle_faccessat_raw fs/open.c | head -3
           echo "=== SukiSU 侧补丁 ==="
-          for p in "$GITHUB_WORKSPACE"/patches-a17/002-*.patch "$GITHUB_WORKSPACE"/patches-a17/003-*.patch "$GITHUB_WORKSPACE"/patches-a17/005-*.patch; do
+          for p in "$GITHUB_WORKSPACE"/patches-a17/002-*.patch "$GITHUB_WORKSPACE"/patches-a17/003-*.patch "$GITHUB_WORKSPACE"/patches-a17/005-*.patch "$GITHUB_WORKSPACE"/patches-a17/006-*.patch; do
             [ -f "$p" ] || continue
             echo "--- $(basename "$p") ---"
             git -C "$GITHUB_WORKSPACE/SukiSU" apply --check -v "$p" || { echo "::error::补丁 $(basename $p) 校验失败"; exit 1; }
