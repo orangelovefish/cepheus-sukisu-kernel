@@ -156,6 +156,10 @@ jobs:
           echo "--- 改造后抽查 ---"
           grep -n ksu_handle_stat_raw fs/stat.c | head -5
           grep -n ksu_handle_faccessat_raw fs/open.c | head -3
+          echo "=== 内核侧: read hook 变量改名 (007) ==="
+          git apply --check -v ../patches-a17/007-a17-read-hook-rename.patch || { echo "::error::007 校验失败"; exit 1; }
+          git apply ../patches-a17/007-a17-read-hook-rename.patch
+          grep -n ksu_vfs_read_hook fs/read_write.c
           echo "=== SukiSU 侧补丁 ==="
           for p in "$GITHUB_WORKSPACE"/patches-a17/002-*.patch "$GITHUB_WORKSPACE"/patches-a17/003-*.patch "$GITHUB_WORKSPACE"/patches-a17/005-*.patch "$GITHUB_WORKSPACE"/patches-a17/006-*.patch; do
             [ -f "$p" ] || continue
