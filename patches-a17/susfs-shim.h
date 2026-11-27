@@ -22,6 +22,7 @@ void susfs_set_priority_uid_filter(void __user **user_info);
 int susfs_parse_priority_app_strings(const char *str);
 
 bool susfs_ends_with(const char *s, const char *suffix);
+bool susfs_starts_with(const char *s, const char *prefix);   /* impl exists in fs/susfs.c:42 */
 
 int ksu_handle_stat_raw(int *dfd, const char __user **filename_user, int *flags);
 int ksu_handle_faccessat_raw(int *dfd, const char __user **filename_user,
