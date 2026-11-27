@@ -176,15 +176,31 @@ jobs:
             echo "::error::susfs-shim.c 未找到"; exit 1
           fi
           if [ -f "$GITHUB_WORKSPACE/patches-a17/susfs-shim.h" ]; then
+            SUSFS_H=include/linux/susfs.h
+            echo "--- 注入前末尾 3 行 ---"
+            tail -3 "$SUSFS_H"
+            # 插到文件最后一个 #endif 之前（include guard 内部）
+            LAST_ENDIF=$(grep -n '^#endif' "$SUSFS_H" | tail -1 | cut -d: -f1)
+            if [ -z "$LAST_ENDIF" ]; then
+              echo "::error::susfs.h 里找不到 #endif"; exit 1
+            fi
+            echo "最后一个 #endif 在行 $LAST_ENDIF"
+            head -n $((LAST_ENDIF - 1)) "$SUSFS_H" > /tmp/susfs.h.new
             {
               echo ""
               echo "/* ===== CI-appended SukiSU compat declarations ===== */"
               cat "$GITHUB_WORKSPACE/patches-a17/susfs-shim.h"
-            } >> include/linux/susfs.h
-            echo "声明已追加到 include/linux/susfs.h (末 5 行):"
-            tail -5 include/linux/susfs.h
-            echo "--- 声明符号抽查 ---"
-            grep -cE '^(void|int|bool) ' include/linux/susfs.h
+              echo ""
+            } >> /tmp/susfs.h.new
+            tail -n +$LAST_ENDIF "$SUSFS_H" >> /tmp/susfs.h.new
+            mv /tmp/susfs.h.new "$SUSFS_H"
+            echo "--- 注入后末尾 6 行 ---"
+            tail -6 "$SUSFS_H"
+            echo "--- 校验: 声明在 #endif 之前 ---"
+            SH_LINE=$(grep -n 'susfs_ends_with' "$SUSFS_H" | tail -1 | cut -d: -f1)
+            EI_LINE=$(grep -n '^#endif' "$SUSFS_H" | tail -1 | cut -d: -f1)
+            echo "susfs_ends_with 行=$SH_LINE 最后 #endif 行=$EI_LINE"
+            [ "$SH_LINE" -lt "$EI_LINE" ] && echo "OK 声明在 #endif 之前" || { echo "::error::注入位置错误"; exit 1; }
           else
             echo "::error::susfs-shim.h 未找到"; exit 1
           fi
@@ -212,6 +228,7 @@ jobs:
           echo 'CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y' >> /tmp/stealth.config
           echo '# CONFIG_KSU_SUSFS_ENABLE_LOG is not set' >> /tmp/stealth.config
           echo '# CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS is not set' >> /tmp/stealth.config
+          echo '# CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER is not set' >> /tmp/stealth.config
           echo '# CONFIG_KSU_DEBUG is not set' >> /tmp/stealth.config
           echo '# CONFIG_KPM is not set' >> /tmp/stealth.config
           echo '# CONFIG_KALLSYMS is not set' >> /tmp/stealth.config
@@ -239,7 +256,7 @@ jobs:
           echo "=========== KSU / SUSFS / KALLSYMS / IKCONFIG 生效项 ==========="
           grep -E '^CONFIG_(KSU|KPM|KALLSYMS|IKCONFIG|LOCALVERSION)' out/.config | sort
           echo "=========== 关键判定 ==========="
-          for k in CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_ENABLE_LOG CONFIG_KSU_DEBUG CONFIG_KPM CONFIG_KALLSYMS CONFIG_KALLSYMS_ALL CONFIG_IKCONFIG CONFIG_IKCONFIG_PROC CONFIG_LOCALVERSION_AUTO; do
+          for k in CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_ENABLE_LOG CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER CONFIG_KSU_DEBUG CONFIG_KPM CONFIG_KALLSYMS CONFIG_KALLSYMS_ALL CONFIG_IKCONFIG CONFIG_IKCONFIG_PROC CONFIG_LOCALVERSION_AUTO; do
             if grep -q "^$k=y" out/.config; then echo "$k = y"
             elif grep -q "^# $k is not set" out/.config; then echo "$k = n"
             else echo "$k = (未出现)"; fi
