@@ -240,7 +240,7 @@ jobs:
           echo '# CONFIG_LOCALVERSION_AUTO is not set' >> /tmp/stealth.config
           wc -l /tmp/stealth.config
           echo "=== B-1: 以原包 .config 为底座 ==="
-          cp "$GITHUB_WORKSPACE/patches-a17/orig_a17.config" out/.config
+          gunzip -c "$GITHUB_WORKSPACE/patches-a17/orig_a17.config.gz" > out/.config
           wc -l out/.config
           echo "=== 原包触控配置留证 ==="
           grep -iE '^CONFIG_TOUCHSCREEN_ST|^# CONFIG_TOUCHSCREEN_ST is|^CONFIG_FTS|^# CONFIG_TOUCHSCREEN_XIAOMI' out/.config || true
