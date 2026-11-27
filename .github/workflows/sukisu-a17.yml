@@ -163,17 +163,30 @@ jobs:
             git -C "$GITHUB_WORKSPACE/SukiSU" apply --check -v "$p" || { echo "::error::补丁 $(basename $p) 校验失败"; exit 1; }
             git -C "$GITHUB_WORKSPACE/SukiSU" apply "$p"
           done
-          echo "=== 追加 SUSFS API shim ==="
+          echo "=== 追加 SUSFS API shim (实现 -> fs/susfs.c, 声明 -> include/linux/susfs.h) ==="
           if [ -f "$GITHUB_WORKSPACE/patches-a17/susfs-shim.c" ]; then
             {
               echo ""
-              echo "/* ===== CI-appended SukiSU compat shims ===== */"
+              echo "/* ===== CI-appended SukiSU compat implementations ===== */"
               cat "$GITHUB_WORKSPACE/patches-a17/susfs-shim.c"
             } >> fs/susfs.c
-            echo "shim 已追加到 fs/susfs.c (末 5 行):"
-            tail -5 fs/susfs.c
+            echo "实现已追加到 fs/susfs.c (末 3 行):"
+            tail -3 fs/susfs.c
           else
-            echo "::warning::shim 未找到"
+            echo "::error::susfs-shim.c 未找到"; exit 1
+          fi
+          if [ -f "$GITHUB_WORKSPACE/patches-a17/susfs-shim.h" ]; then
+            {
+              echo ""
+              echo "/* ===== CI-appended SukiSU compat declarations ===== */"
+              cat "$GITHUB_WORKSPACE/patches-a17/susfs-shim.h"
+            } >> include/linux/susfs.h
+            echo "声明已追加到 include/linux/susfs.h (末 5 行):"
+            tail -5 include/linux/susfs.h
+            echo "--- 声明符号抽查 ---"
+            grep -cE '^(void|int|bool) ' include/linux/susfs.h
+          else
+            echo "::error::susfs-shim.h 未找到"; exit 1
           fi
           echo "=== 改动统计 ==="
           git status --short | head -20
